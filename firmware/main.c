@@ -3,6 +3,9 @@
  *Atmega328p使用
  *動作周波数20MHz(外部セラミック発振子,分周なし)
  *エフェクト不明
+ *ヒューズ設定
+    fL0xa6 fH0xd9 fX0x07 
+    外部セラミック振動子　外部クロック出力　 
  */
 #include <avr/io.h>
 #include <math.h>
@@ -10,9 +13,10 @@
 #include <avr/interrupt.h>
 #include <util/delay.h>
 
+/*AD変換用定義*/
 #define is_SET(x,y) ((x) & (1<<(y)))
 
-
+/*シリアル通信用定義*/
 #define FOSC   20000000//動作周波数
 #define BAUD   9600//ボーレート
 #define MYUBRR (FOSC/16/BAUD)-1
@@ -22,34 +26,32 @@
 #define CR        usart_tx(0x0d)        //復帰
 #define HT        usart_tx(0x09)        //水平ﾀﾌﾞ
 
-#define smp_f 30000//割り込み周波数(Hz) ICRの設定値
-
-void pwm_tx(unsigned int);
-void usart_tx(unsigned char);
-unsigned char usart_rx(void);
-
+#define smp_f 44000//サンプリング周波数(Hz) ICRの設定値より
 
 /*変数宣言*/
-
-uint8_t  bufICR1 = 0;
-uint8_t  buf_ad = 0;
+float  bufICR1 = 0;
+float  buf_ad = 0;
 
 /*関数宣言*/
 /*高速PWMではTOP値がOCRA、比較値がOCR0Bとなる*/
-
 void adc_ini(){
     ADMUX |=_BV(ADLAR);
     /*REFS1 REFS0 : 00 Arefピンの外部基準電圧
      ADPS2 ADPS1 ADPS0 :000 CK/2 ~= 100000Hz(変換クロック)
      MUX3 MUX2 MUX1 MUX0: 0000　ADC0ピン
      */
+    
     ADCSRA|= _BV(ADEN)|_BV(ADPS1);
     /*ADEN :1 A/D許可
-     ADPS2 ADPS1 ADPS0 :000 CK/4 ~= 50000Hz(変換クロック)
-     
-     _BV(ADSC)によって起動 単独変換動作
+     ADPS2 ADPS1 ADPS0 :010 CK/4 ~= 50000Hz(変換クロック),それ以上だとうまくできない？？
+    _BV(ADSC)によって起動 単独変換動
      */
+    
+    /*ADCSRA|=_BV(ADEN)|_BV(ADATE);
+    ADCSRB|=_BV(ADTS2)|_BV(ADTS1)|_BV(ADTS0);
+    自動変換　タイマ/カウンタ1捕獲*/
     DIDR0 |=_BV(ADC0D);
+    /*デジタル入力禁止 ADC0: PC0*/
 }
 
 void timer_ini(){//タイマー設定
@@ -60,22 +62,10 @@ void timer_ini(){//タイマー設定
     /*WGM13 WGM12 WGM11 WGM10: 1000 位相基準PWM動作 ICR1
      *CS12 CS11 CS10 : 001 分周なし*/
     
-    ICR1 = 332;//割り込み周波数 20000Hz時 499
+    ICR1 = 226;//割り込み周波数 20000Hz時 499
     bufICR1 = ICR1;
     TIMSK1|=_BV(ICIE1);/*タイマ/カウンタ1捕獲割り込み許可*/
     OCR1B = 0;
-}
-
-/*タイマ1 捕獲割り込み*/
-ISR(TIMER1_CAPT_vect){
-    
-    ADCSRA|= _BV(ADSC);//ADC開始
-    while(is_SET(ADCSRA,ADIF)==0);  //変換終了まで待機
-   
-    buf_ad = ADCH;
-    OCR1B = bufICR1 * buf_ad/256.0;
-    //pwm_tx(OCR1B);
-    //LF;
 }
 
 void usart_tx(unsigned char data)//送信用関数
@@ -126,7 +116,6 @@ void pwm_tx(unsigned int pwm_val)    //PWMのﾃﾞｰﾀ＆電圧値換算し�
     return;
 }
 
-
 void pin_ini(){//ピン設定
     DDRB = 0b00000000;
     PORTB= 0b00000000;
@@ -135,19 +124,30 @@ void pin_ini(){//ピン設定
     
 }
 
+/*タイマ1 捕獲割り込み*/
+ISR(TIMER1_CAPT_vect){
+    OCR1B = bufICR1 * (buf_ad/256.0);
+   ADCSRA|= _BV(ADSC);//ADC開始
+   // while(is_SET(ADCSRA,ADIF)==0);  //変換終了まで待機*/
+    buf_ad = ADCH;
+  /*  pwm_tx(buf_ad);
+    LF;*/
+    /*シリアル通信すると正常に出力できないのであくまでデバッグ用に*/
+}
+
 
 /*メイン関数*/
 int main(void){
-    
     serial_ini();
     adc_ini();
     timer_ini();
     pin_ini();
     
     sei();//割り込み許可
-    ADCSRA |=_BV(ADSC);//AD変換開始
+    ADCSRA |=_BV(ADSC);//AD変換初期化兼開始
     
     while(1){
+        
 
     }
     return 0;
