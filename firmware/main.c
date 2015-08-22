@@ -4,8 +4,8 @@
  *動作周波数20MHz(外部セラミック発振子,分周なし)
  *エフェクト不明
  *ヒューズ設定
-    fL0xa6 fH0xd9 fX0x07 
-    外部セラミック振動子　外部クロック出力　 
+ fL0xa6 fH0xd9 fX0x07
+ 外部セラミック振動子　外部クロック出力
  */
 #include <avr/io.h>
 #include <math.h>
@@ -32,6 +32,9 @@
 float  bufICR1 = 0;
 float  buf_ad = 0;
 
+uint8_t delay_data[3000]={0};/*0.1s分のデータ保管*/
+uint8_t i=0;/*delay_data[]用カウンタ変数*/
+
 /*関数宣言*/
 /*高速PWMではTOP値がOCRA、比較値がOCR0Bとなる*/
 void adc_ini(){
@@ -44,12 +47,12 @@ void adc_ini(){
     ADCSRA|= _BV(ADEN)|_BV(ADPS1);
     /*ADEN :1 A/D許可
      ADPS2 ADPS1 ADPS0 :010 CK/4 ~= 50000Hz(変換クロック),それ以上だとうまくできない？？
-    _BV(ADSC)によって起動 単独変換動
+     _BV(ADSC)によって起動 単独変換動
      */
     
     /*ADCSRA|=_BV(ADEN)|_BV(ADATE);
-    ADCSRB|=_BV(ADTS2)|_BV(ADTS1)|_BV(ADTS0);
-    自動変換　タイマ/カウンタ1捕獲*/
+     ADCSRB|=_BV(ADTS2)|_BV(ADTS1)|_BV(ADTS0);
+     自動変換　タイマ/カウンタ1捕獲*/
     DIDR0 |=_BV(ADC0D);
     /*デジタル入力禁止 ADC0: PC0*/
 }
@@ -124,15 +127,34 @@ void pin_ini(){//ピン設定
     
 }
 
+uint8_t clip_ef(uint8_t ad_data){
+    if(ad_data>120)//上限
+        ad_data=120;
+    if (ad_data<20)//下限
+        ad_data=20;
+    return ad_data;
+}
+
+void delay_sound(uint8_t ad_data){
+    if(i>3000){
+        i=0;
+    }
+    delay_data[i] = ad_data;
+    i++;
+  }
+
 /*タイマ1 捕獲割り込み*/
 ISR(TIMER1_CAPT_vect){
-    OCR1B = bufICR1 * (buf_ad/256.0);
-   ADCSRA|= _BV(ADSC);//ADC開始
-   // while(is_SET(ADCSRA,ADIF)==0);  //変換終了まで待機*/
+    OCR1B = bufICR1 * (delay_data[i]/256.0);
+   /* OCR1B = bufICR1 * (buf_ad/256.0);クリッピング用*/
+    ADCSRA|= _BV(ADSC);//ADC開始
+    // while(is_SET(ADCSRA,ADIF)==0);  //変換終了まで待機*/
     buf_ad = ADCH;
-  /*  pwm_tx(buf_ad);
-    LF;*/
-    /*シリアル通信すると正常に出力できないのであくまでデバッグ用に*/
+    delay_sound(buf_ad);
+   /* buf_ad = clip_ef(buf_ad); クリッピング用*/
+    //pwm_tx(delay_data[i]);
+    //LF;
+    /*シリアル通信すると正常に波形が出力できないのであくまでデバッグ用に*/
 }
 
 
@@ -148,7 +170,7 @@ int main(void){
     
     while(1){
         
-
+        
     }
     return 0;
 }
