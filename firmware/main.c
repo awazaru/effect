@@ -31,11 +31,56 @@
 /*変数宣言*/
 float  bufICR1 = 0;
 float  buf_ad = 0;
+uint8_t spi_buf = 0;
+uint8_t serial_buf = 0;
+uint8_t dummy = 1;
 
 uint8_t delay_data[3000]={0};/*0.1s分のデータ保管*/
 uint8_t i=0;/*delay_data[]用カウンタ変数*/
 
 /*関数宣言*/
+
+void spi_ini(){//spi通信設定
+    //CSはPD2ピン
+    SPCR|=_BV(SPE)|_BV(MSTR);
+    /*  SPIE    : SPI割り込み許可
+        SPE     : SPI許可(SPI操作を許可するために必須)
+        DORD    : データ順選択,1:LSBから 0:MSBから
+        MSTR    : 1:主装置動作 0:従装置動作
+        CPOL    : SCK極性選択
+        CPHA    :　SCK位相選択
+        SPR1,SPR0 : 00:SCK周波数=fosc/4
+     */
+    /*SPI状態レジスタ SPSR
+        SPIF    : SPI割り込み要求フラグ 転送完了時1
+        WCOL    :上書き発生フラグ
+     */
+    /*SPIデータレジスタ　SPDR
+        8bit 
+        7 6 5 4 3 2 1 0
+        (MSB)       (LSB)
+     */
+}
+
+void spi_send(uint8_t spi_data){
+   // PORTB = 0b00000000;
+    //puts_tx("1");
+    uint8_t dummy ;
+    dummy = SPDR;
+    SPDR = spi_data;
+    while(!(SPSR&(1<<SPIF)));//転送完了まで待機
+    dummy = SPDR;
+    //PORTB = 0b00000010;
+}
+          
+unsigned int spi_get(void){
+    //puts_tx("2");
+    //uint8_t dummy = 0;
+    SPDR = dummy;
+   while(!(SPSR&(1<<SPIF)));//転送完了まで待機
+    return SPDR;
+              
+}
 /*高速PWMではTOP値がOCRA、比較値がOCR0Bとなる*/
 void adc_ini(){
     ADMUX |=_BV(ADLAR);
@@ -59,13 +104,14 @@ void adc_ini(){
 
 void timer_ini(){//タイマー設定
     /*PWM*/
-    TCCR1A |=_BV(COM1B1)|_BV(WGM11);
-    /*位相基準PWM TOP値ICR1*/
+    TCCR1A |=_BV(COM1A1)|_BV(WGM11);
+    /*位相基準PWM OC1A TOP値ICR1*/
     TCCR1B|=_BV(WGM13)|_BV(CS10);
     /*WGM13 WGM12 WGM11 WGM10: 1000 位相基準PWM動作 ICR1
      *CS12 CS11 CS10 : 001 分周なし*/
     
     ICR1 = 226;//割り込み周波数 20000Hz時 499
+    //ICR1 = 2000;
     bufICR1 = ICR1;
     TIMSK1|=_BV(ICIE1);/*タイマ/カウンタ1捕獲割り込み許可*/
     OCR1B = 0;
@@ -120,18 +166,16 @@ void pwm_tx(unsigned int pwm_val)    //PWMのﾃﾞｰﾀ＆電圧値換算し�
 }
 
 void pin_ini(){//ピン設定
-    DDRB = 0b00000000;
-    PORTB= 0b00000000;
-    DDRB = 0b00000100;//OCR1B
-    PORTB = 0b00000000;
+    DDRB    =   0b00101110;//SCK:1 MISO:0 MOSI:1PB1:OCR1A PB2:CS CSをLOWで選択
+    PORTB   =   0b00000100;
     
 }
 
 uint8_t clip_ef(uint8_t ad_data){
-    if(ad_data>120)//上限
-        ad_data=120;
-    if (ad_data<20)//下限
-        ad_data=20;
+    if(ad_data>180)//上限
+        ad_data=180;
+    if (ad_data<30)//下限
+        ad_data=30;
     return ad_data;
 }
 
@@ -145,28 +189,54 @@ void delay_sound(uint8_t ad_data){
 
 /*タイマ1 捕獲割り込み*/
 ISR(TIMER1_CAPT_vect){
-    OCR1B = bufICR1 * (delay_data[i]/256.0);
-   /* OCR1B = bufICR1 * (buf_ad/256.0);クリッピング用*/
-    ADCSRA|= _BV(ADSC);//ADC開始
+    
+    PORTB=0b00000000;
+    spi_send(0x02);//write
+    spi_send(0x00);
+    spi_send(0x00);
+    spi_send(0x00);
+    spi_send(10);
+    PORTB=0b00000100;
+    //_delay_us(10);
+    PORTB=0b00000000;
+    //spi_send(0x03);
+    spi_send(0x03);//read
+    spi_send(0x00);
+    spi_send(0x00);
+    spi_send(0x00);
+    serial_buf = spi_get();
+    PORTB=0b00000100;
+    
+    //OCR1A = bufICR1 * (delay_data[i+1]/256.0);
+   // OCR1A = bufICR1 * (buf_ad/256.0);//クリッピング用
+    //ADCSRA|= _BV(ADSC);//ADC開始
     // while(is_SET(ADCSRA,ADIF)==0);  //変換終了まで待機*/
-    buf_ad = ADCH;
-    delay_sound(buf_ad);
-   /* buf_ad = clip_ef(buf_ad); クリッピング用*/
-    //pwm_tx(delay_data[i]);
-    //LF;
+    //buf_ad = ADCH;
+    //OCR1A = buf_ad;
+    //delay_sound(buf_ad);
+    //buf_ad = clip_ef(buf_ad); //クリッピング用
+    pwm_tx(serial_buf);
+    LF;
     /*シリアル通信すると正常に波形が出力できないのであくまでデバッグ用に*/
 }
 
 
 /*メイン関数*/
 int main(void){
+    spi_ini();
     serial_ini();
     adc_ini();
     timer_ini();
     pin_ini();
     
     sei();//割り込み許可
-    ADCSRA |=_BV(ADSC);//AD変換初期化兼開始
+    
+    //SPDR  = 0;
+    PORTB = 0b00000000;
+    spi_send(0x01);
+    spi_send(0x00);
+    PORTB = 0b00000100;
+   // ADCSRA |=_BV(ADSC);//AD変換初期化兼開始
     
     while(1){
         
