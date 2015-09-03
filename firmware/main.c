@@ -2,11 +2,12 @@
  *エフェクター
  *Atmega328p使用
  *動作周波数20MHz(外部セラミック発振子,分周なし)
- *エフェクト不明
+ *エフェクトは"ディレイ","クリッピング","エコー"を予定
  *ヒューズ設定
  fL0xa6 fH0xd9 fX0x07
- 外部セラミック振動子　外部クロック出力
+ 外部セラミック振動子外部クロック出力
  */
+
 #include <avr/io.h>
 #include <math.h>
 #include <stdlib.h>
@@ -21,7 +22,7 @@
 #define BAUD   9600//ボーレート
 #define MYUBRR (FOSC/16/BAUD)-1
 
-// ｼﾘｱﾙ通信ｺﾏﾝﾄﾞ（ｱｽｷｰｺｰﾄﾞ)
+/* シリアル通信ｺﾏﾝﾄﾞ（ｱｽｷｰｺｰﾄﾞ)*/
 #define LF        usart_tx(0x0a)        //改行
 #define CR        usart_tx(0x0d)        //復帰
 #define HT        usart_tx(0x09)        //水平ﾀﾌﾞ
@@ -29,57 +30,56 @@
 #define smp_f 44000//サンプリング周波数(Hz) ICRの設定値より
 
 /*変数宣言*/
-float  bufICR1 = 0;
-float  buf_ad = 0;
-uint8_t spi_buf = 0;
-uint8_t serial_buf = 0;
-uint8_t dummy = 1;
-
-uint8_t delay_data[3000]={0};/*0.1s分のデータ保管*/
+volatile float  ICR1_buf = 0;
+volatile float  ad_buf = 0;
+volatile uint8_t spi_buf = 0;
+volatile uint8_t serial_buf = 0;
 uint8_t i=0;/*delay_data[]用カウンタ変数*/
+volatile uint8_t add_top=0;
+volatile uint8_t add_middle=0;
+volatile uint8_t add_low=0;
+volatile uint16_t add_check=0;
+
+//uint8_t add_low=0;
+/*外付けSRAM下位8bitは毎回8bitのデータを入れるので常に0x00*/
 
 /*関数宣言*/
-
 void spi_ini(){//spi通信設定
     //CSはPD2ピン
     SPCR|=_BV(SPE)|_BV(MSTR);
     /*  SPIE    : SPI割り込み許可
-        SPE     : SPI許可(SPI操作を許可するために必須)
-        DORD    : データ順選択,1:LSBから 0:MSBから
-        MSTR    : 1:主装置動作 0:従装置動作
-        CPOL    : SCK極性選択
-        CPHA    :　SCK位相選択
-        SPR1,SPR0 : 00:SCK周波数=fosc/4
+     SPE     : SPI許可(SPI操作を許可するために必須)
+     DORD    : データ順選択,1:LSBから 0:MSBから
+     MSTR    : 1:主装置動作 0:従装置動作
+     CPOL    : SCK極性選択
+     CPHA    :　SCK位相選択
+     SPR1,SPR0 : 00:SCK周波数=fosc/4
      */
     /*SPI状態レジスタ SPSR
-        SPIF    : SPI割り込み要求フラグ 転送完了時1
-        WCOL    :上書き発生フラグ
+     SPIF    : SPI割り込み要求フラグ 転送完了時1
+     WCOL    :上書き発生フラグ
      */
     /*SPIデータレジスタ　SPDR
-        8bit 
-        7 6 5 4 3 2 1 0
-        (MSB)       (LSB)
+     8bit
+     7 6 5 4 3 2 1 0
+     (MSB)       (LSB)
      */
 }
-
 void spi_send(uint8_t spi_data){
-   // PORTB = 0b00000000;
     //puts_tx("1");
-    uint8_t dummy ;
+ volatile  uint8_t dummy = 0;
     dummy = SPDR;
     SPDR = spi_data;
     while(!(SPSR&(1<<SPIF)));//転送完了まで待機
     dummy = SPDR;
-    //PORTB = 0b00000010;
 }
-          
 unsigned int spi_get(void){
     //puts_tx("2");
-    //uint8_t dummy = 0;
+   volatile uint8_t dummy = 0;
     SPDR = dummy;
-   while(!(SPSR&(1<<SPIF)));//転送完了まで待機
+    while(!(SPSR&(1<<SPIF)));//転送完了まで待機
     return SPDR;
-              
+    
 }
 /*高速PWMではTOP値がOCRA、比較値がOCR0Bとなる*/
 void adc_ini(){
@@ -97,7 +97,7 @@ void adc_ini(){
     
     /*ADCSRA|=_BV(ADEN)|_BV(ADATE);
      ADCSRB|=_BV(ADTS2)|_BV(ADTS1)|_BV(ADTS0);
-     自動変換　タイマ/カウンタ1捕獲*/
+     自動変換タイマ/カウンタ1捕獲*/
     DIDR0 |=_BV(ADC0D);
     /*デジタル入力禁止 ADC0: PC0*/
 }
@@ -111,64 +111,55 @@ void timer_ini(){//タイマー設定
      *CS12 CS11 CS10 : 001 分周なし*/
     
     ICR1 = 226;//割り込み周波数 20000Hz時 499
-    //ICR1 = 2000;
-    bufICR1 = ICR1;
+    //ICR1 = 10000;
+    ICR1_buf = ICR1;
     TIMSK1|=_BV(ICIE1);/*タイマ/カウンタ1捕獲割り込み許可*/
     OCR1B = 0;
 }
 
-void usart_tx(unsigned char data)//送信用関数
-{
+void usart_tx(unsigned char data){//送信用関数
     while( !(UCSR0A & (1<<UDRE0)) );        //送信ﾊﾞｯﾌｧ空き待機
     UDR0 = data;
 }
 
-unsigned char usart_rx(void)//受信用関数
-{
+unsigned char usart_rx(void){//受信用関数
     while( !(UCSR0A & (1<<RXC0)) );                //受信完了待機
     return UDR0;                                //受信ﾃﾞｰﾀ返す
 }
 
 
-void puts_tx(char *str)//文字列送信用関数
-{
-    while( *str != 0x00 ) //nullになるまで実行
-    {
+void puts_tx(char *str){//文字列送信用関数
+  while( *str != 0x00 ){ //nullになるまで実行
         usart_tx(*str);
         str++;                                    //ｱﾄﾞﾚｽ+1
     }
 }
 
-void serial_ini(){
-    // シリアル通信設定
+void serial_ini(){// シリアル通信設定
     UBRR0 = MYUBRR;
     UCSR0A=0b00000000;//受信すると10000000 送信有効になると00100000
     UCSR0B=0b00011000;//送受信有効
     UCSR0C=0b00000110;//データ8bit、非同期、バリティなし、stop1bit
 }
 
-void pwm_tx(unsigned int pwm_val)    //PWMのﾃﾞｰﾀ＆電圧値換算し送信
-{
+void pwm_tx(unsigned int pwm_val){    //PWMのﾃﾞｰﾀ＆電圧値換算し送信
     unsigned char a4,a3,a2,a1;        //PWMのﾃﾞｰﾀ各桁
-    
     a4 = (pwm_val/1000)+0x30;        //1000の位
     a3 = (pwm_val/100)%10+0x30;        //100の位
     a2 = (pwm_val/10)%10+0x30;        //10の位
     a1 = (pwm_val%10)+0x30;            //1の位
-    
+
     usart_tx(a4);        //ﾃﾞｰﾀ各桁の送信
     usart_tx(a3);
     usart_tx(a2);
     usart_tx(a1);
-    // LF;
-    
     return;
 }
 
 void pin_ini(){//ピン設定
-    DDRB    =   0b00101110;//SCK:1 MISO:0 MOSI:1PB1:OCR1A PB2:CS CSをLOWで選択
+    DDRB    =   0b00101110;
+    /*SCK:1 MISO:0 MOSI:1PB1:OCR1A PB2:CS CSをLOWで選択*/
     PORTB   =   0b00000100;
-    
 }
 
 uint8_t clip_ef(uint8_t ad_data){
@@ -179,68 +170,105 @@ uint8_t clip_ef(uint8_t ad_data){
     return ad_data;
 }
 
-void delay_sound(uint8_t ad_data){
+/*void delay_sound(uint8_t ad_data){
     if(i>3000){
         i=0;
     }
     delay_data[i] = ad_data;
     i++;
-  }
+    }*/
 
 /*タイマ1 捕獲割り込み*/
 ISR(TIMER1_CAPT_vect){
+    //OCR1A = bufICR1 * (delay_data[i+1]/256.0);
+    // OCR1A = bufICR1 * (buf_ad/256.0);//クリッピング用
+    ADCSRA|= _BV(ADSC);//ADC開始
+     while(is_SET(ADCSRA,ADIF)==0);  //変換終了まで待機*/
+    ad_buf = ADCH;
+
+    add_low++;
     
+    add_check=(add_top<<2)+add_middle;
+    if(add_check>0x0EFEFF){
+	 add_top=0;
+	 add_middle=0;
+	 add_low=0;
+    }
+        
     PORTB=0b00000000;
     spi_send(0x02);//write
-    spi_send(0x00);
-    spi_send(0x00);
-    spi_send(0x00);
-    spi_send(10);
+    spi_send(add_top);
+    spi_send(add_middle+0x22);
+    spi_send(add_low);
+    spi_send(ad_buf);
     PORTB=0b00000100;
-    //_delay_us(10);
+      
     PORTB=0b00000000;
-    //spi_send(0x03);
     spi_send(0x03);//read
-    spi_send(0x00);
-    spi_send(0x00);
-    spi_send(0x00);
+    spi_send(add_top);
+    spi_send(add_middle);
+    spi_send(add_low);
     serial_buf = spi_get();
     PORTB=0b00000100;
     
-    //OCR1A = bufICR1 * (delay_data[i+1]/256.0);
-   // OCR1A = bufICR1 * (buf_ad/256.0);//クリッピング用
-    //ADCSRA|= _BV(ADSC);//ADC開始
-    // while(is_SET(ADCSRA,ADIF)==0);  //変換終了まで待機*/
-    //buf_ad = ADCH;
-    //OCR1A = buf_ad;
+      OCR1A = serial_buf;
     //delay_sound(buf_ad);
     //buf_ad = clip_ef(buf_ad); //クリッピング用
-    pwm_tx(serial_buf);
-    LF;
+
+     if(add_low>254){
+	 add_low=0;
+	 add_middle++;
+	 if(add_middle>254){
+	   add_middle=0;
+	   add_top++;
+	   if(add_top>13){
+		add_top=0;
+	 }
+    }
+	}
+    
+    //pwm_tx(l);
+    //pwm_tx(k);
+    //HT;
+	//  pwm_tx(ad_buf);
+	// pwm_tx(serial_buf);
+	// LF;
     /*シリアル通信すると正常に波形が出力できないのであくまでデバッグ用に*/
 }
 
-
 /*メイン関数*/
 int main(void){
+      /*初期化設定*/
     spi_ini();
     serial_ini();
     adc_ini();
     timer_ini();
     pin_ini();
     
-    sei();//割り込み許可
+    sei();//全体割り込み許可
     
-    //SPDR  = 0;
     PORTB = 0b00000000;
     spi_send(0x01);
     spi_send(0x00);
     PORTB = 0b00000100;
-   // ADCSRA |=_BV(ADSC);//AD変換初期化兼開始
-    
+    // ADCSRA |=_BV(ADSC);//AD変換初期化兼開始
+
+    /*SRAM初期化*/
+    /*   for(add_top=0;add_top<=15;add_top++){
+	 for(add_middle=0;add_middle<=254;add_middle++){
+    PORTB=0b00000000;
+    spi_send(0x02);//write
+    spi_send(add_top);
+    spi_send(add_middle);
+    spi_send(0x00);//8bitのデータを入れるため毎回0x00
+    spi_send(0x00);
+    PORTB=0b00000100;
+	 }
+    }
+    add_top=0;
+    add_middle=0;*/
+
     while(1){
-        
-        
     }
     return 0;
 }
