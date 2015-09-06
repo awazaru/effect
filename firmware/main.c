@@ -35,10 +35,14 @@ volatile float  ad_buf = 0;
 volatile uint8_t spi_buf = 0;
 volatile uint8_t serial_buf = 0;
 uint8_t i=0;/*delay_data[]用カウンタ変数*/
-volatile uint8_t add_top=0;
-volatile uint8_t add_middle=0;
-volatile uint8_t add_low=0;
-volatile uint16_t add_check=0;
+volatile uint8_t add_top_w=0;
+volatile uint8_t add_middle_w=0x22;
+volatile uint8_t add_low_w=0;
+volatile uint8_t add_top_r=0;
+volatile uint8_t add_middle_r=0;
+volatile uint8_t add_low_r=0;
+volatile uint16_t add_check_w=0;
+volatile uint16_t add_check_r=0;
 
 //uint8_t add_low=0;
 /*外付けSRAM下位8bitは毎回8bitのデータを入れるので常に0x00*/
@@ -186,28 +190,34 @@ ISR(TIMER1_CAPT_vect){
      while(is_SET(ADCSRA,ADIF)==0);  //変換終了まで待機*/
     ad_buf = ADCH;
 
-    add_low++;
+    //  add_low++;
     
-    add_check=(add_top<<2)+add_middle;
-    if(add_check>0x0EFEFF){
-	 add_top=0;
-	 add_middle=0;
-	 add_low=0;
+    add_check_w=(add_top_w<<2)+add_middle_w+0x22;
+    if(add_check_w>=0x0EFF){
+	 add_top_w=0;
+	 add_middle_w=0;
+	 add_low_w=0;
     }
-        
+    add_check_r=(add_top_r<<2)+add_middle_r;
+    if(add_check_r>=0x0EFF){
+	 add_top_r=0;
+	 add_middle_r=0;
+	 add_low_r=0;
+    }
+    
     PORTB=0b00000000;
     spi_send(0x02);//write
-    spi_send(add_top);
-    spi_send(add_middle+0x22);
-    spi_send(add_low);
+    spi_send(add_top_w);
+    spi_send(add_middle_w);
+    spi_send(add_low_w);
     spi_send(ad_buf);
     PORTB=0b00000100;
       
     PORTB=0b00000000;
     spi_send(0x03);//read
-    spi_send(add_top);
-    spi_send(add_middle);
-    spi_send(add_low);
+    spi_send(add_top_r);
+    spi_send(add_middle_r);
+    spi_send(add_low_r);
     serial_buf = spi_get();
     PORTB=0b00000100;
     
@@ -215,19 +225,31 @@ ISR(TIMER1_CAPT_vect){
     //delay_sound(buf_ad);
     //buf_ad = clip_ef(buf_ad); //クリッピング用
 
-     if(add_low>254){
-	 add_low=0;
-	 add_middle++;
-	 if(add_middle>254){
-	   add_middle=0;
-	   add_top++;
-	   if(add_top>13){
-		add_top=0;
-	 }
+	 add_low_w++;
+     if(add_low_w>=0xFF){
+	 add_low_w=0;
+	 add_middle_w++;
+	 if(add_middle_w>=0xFF){
+	   add_middle_w=0;
+	   add_top_w++;
+	   /*   if(add_top>14){
+			add_top=0;
+			}*/
     }
 	}
-    
-    //pwm_tx(l);
+	add_low_r++;
+	     if(add_low_r>=0xFF){
+	 add_low_r=0;
+	 add_middle_r++;
+	 if(add_middle_r>=0xFF){
+	   add_middle_r=0;
+	   add_top_r++;
+	   /*   if(add_top>14){
+			add_top=0;
+			}*/
+    }
+	}
+	//pwm_tx(l);
     //pwm_tx(k);
     //HT;
 	//  pwm_tx(ad_buf);
